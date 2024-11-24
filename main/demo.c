@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include <esp_err.h>
-#include <esp_err.h>
 #include "nvs_flash.h"
 #include <esp_sleep.h>
 #include <esp_wifi.h>
@@ -14,13 +13,16 @@
 #include "esp32/rom/lldesc.h"
 #include <soc/rtc.h>
 #include "video.h"
+#include <esp_system.h>
 #include "driver/i2s.h"
 #include "freertos/queue.h"
 #if CONFIG_VIDEO_ENABLE_LVGL_SUPPORT
 #include "lvgl_driver_video.h"
 #endif
+#include "esp_chip_info.h"
+#include "esp_flash.h"
 
-static const char* TAG="DEMO";
+static const char* TAG = "DEMO";
 
 #if CONFIG_VIDEO_ENABLE_LVGL_SUPPORT
 void demo_pm5544(lv_obj_t* scr)
@@ -37,13 +39,13 @@ void demo_pm5544(lv_obj_t* scr)
 
     lv_obj_t* top_label = lv_label_create(scr);
     lv_obj_set_width(top_label, 55);
-    lv_obj_set_style_text_color(top_label, lv_color_white(), LV_STATE_DEFAULT );
+    lv_obj_set_style_text_color(top_label, lv_color_white(), LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(top_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(top_label, LV_ALIGN_CENTER, 0, -83);
 
     lv_obj_t* mode_text = lv_label_create(scr);
     lv_obj_set_width(mode_text, 75);
-    lv_obj_set_style_text_color(mode_text, lv_color_white(), LV_STATE_DEFAULT );
+    lv_obj_set_style_text_color(mode_text, lv_color_white(), LV_STATE_DEFAULT);
     lv_obj_align(mode_text, LV_ALIGN_CENTER, 0, 66);
     lv_obj_set_style_text_align(mode_text, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -74,37 +76,37 @@ void demo_meter(lv_obj_t* scr)
     lv_obj_center(meter);
     lv_obj_set_size(meter, 200, 200);
 
-    /*Add a scale first*/
+    /* Add a scale first */
     lv_meter_scale_t* scale = lv_meter_add_scale(meter);
     lv_meter_set_scale_ticks(meter, scale, 41, 2, 10, lv_palette_main(LV_PALETTE_GREY));
     lv_meter_set_scale_major_ticks(meter, scale, 8, 4, 15, lv_color_black(), 10);
 
     lv_meter_indicator_t* indic;
 
-    /*Add a blue arc to the start*/
+    /* Add a blue arc to the start */
     indic = lv_meter_add_arc(meter, scale, 3, lv_palette_main(LV_PALETTE_BLUE), 0);
     lv_meter_set_indicator_start_value(meter, indic, 0);
     lv_meter_set_indicator_end_value(meter, indic, 20);
 
-    /*Make the tick lines blue at the start of the scale*/
+    /* Make the tick lines blue at the start of the scale */
     indic = lv_meter_add_scale_lines(meter, scale, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_BLUE), false, 0);
     lv_meter_set_indicator_start_value(meter, indic, 0);
     lv_meter_set_indicator_end_value(meter, indic, 20);
 
-    /*Add a red arc to the end*/
+    /* Add a red arc to the end */
     indic = lv_meter_add_arc(meter, scale, 3, lv_palette_main(LV_PALETTE_RED), 0);
     lv_meter_set_indicator_start_value(meter, indic, 80);
     lv_meter_set_indicator_end_value(meter, indic, 100);
 
-    /*Make the tick lines red at the end of the scale*/
+    /* Make the tick lines red at the end of the scale */
     indic = lv_meter_add_scale_lines(meter, scale, lv_palette_main(LV_PALETTE_RED), lv_palette_main(LV_PALETTE_RED), false, 0);
     lv_meter_set_indicator_start_value(meter, indic, 80);
     lv_meter_set_indicator_end_value(meter, indic, 100);
 
-    /*Add a needle line indicator*/
+    /* Add a needle line indicator */
     indic = lv_meter_add_needle_line(meter, scale, 4, lv_palette_main(LV_PALETTE_GREY), -10);
 
-    /*Create an animation to set the value*/
+    /* Create an animation to set the value */
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_exec_cb(&a, meter_set_value);
@@ -121,40 +123,28 @@ void demo_meter(lv_obj_t* scr)
 void create_label(lv_style_t* style, lv_obj_t* cont, const char* text, uint8_t row, uint8_t col)
 {
     lv_obj_t* obj = lv_label_create(cont);
-    lv_obj_set_grid_cell(obj, LV_GRID_ALIGN_STRETCH, col, 1,
-                              LV_GRID_ALIGN_STRETCH, row, 1);
+    lv_obj_set_grid_cell(obj, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
 
     lv_label_set_text(obj, text);
     lv_obj_add_style(obj, style, 0);
 }
 
-const char* get_chip_name(esp_chip_model_t model)
+const char* get_chip_name(esp_chip_info_t* chip_info)
 {
-    switch(model)
+    switch (chip_info->model)
     {
         case CHIP_ESP32:
             return "ESP32";
-            break;
-
         case CHIP_ESP32S2:
             return "ESP32-S2";
-            break;
-    
         case CHIP_ESP32S3:
             return "ESP32-S3";
-            break;
-
         case CHIP_ESP32C3:
             return "ESP32-C3";
-            break;
-    
         case CHIP_ESP32H2:
             return "ESP32-H2";
-            break;
-
         default:
             return "UNKNOWN";
-            break;
     }
 }
 
@@ -192,10 +182,10 @@ void demo_system_info(lv_obj_t* scr)
     {
         create_label(&style, cont, labels[row], row, 0);
 
-        switch( row )
+        switch (row)
         {
             case 0:
-                snprintf(value, sizeof(value), "%s", get_chip_name(chip_info.model));
+                snprintf(value, sizeof(value), "%s", get_chip_name(&chip_info));
                 break;
 
             case 1:
@@ -203,7 +193,9 @@ void demo_system_info(lv_obj_t* scr)
                 break;
 
             case 2:
-                snprintf(value, sizeof(value), "%s %s", (chip_info.features & CHIP_FEATURE_BT) ? "BT" : "", (chip_info.features & CHIP_FEATURE_BLE) ? "BLE" : "");
+                snprintf(value, sizeof(value), "%s %s",
+                         (chip_info.features & BIT(0)) ? "BT" : "",
+                         (chip_info.features & BIT(1)) ? "BLE" : "");
                 break;
 
             case 3:
@@ -211,9 +203,19 @@ void demo_system_info(lv_obj_t* scr)
                 break;
 
             case 4:
-                snprintf(value, sizeof(value), "%d MiB", spi_flash_get_chip_size()/(1024*1024));
+            {
+                uint32_t flash_size;  
+                esp_err_t ret = esp_flash_get_size(NULL, &flash_size);  
+                if (ret == ESP_OK)
+                {
+                    snprintf(value, sizeof(value), "%lu MiB", flash_size / (1024 * 1024));
+                }
+                else
+                {
+                    snprintf(value, sizeof(value), "Unknown");
+                }
                 break;
-  
+            }
         }
 
         create_label(&style, cont, value, row, 1);
@@ -238,7 +240,7 @@ void slides_demo(void)
 {
     for (size_t i = 0; i < MAX_DEMO_COUNT; i++)
     {
-        screens[i]= lv_obj_create(NULL);
+        screens[i] = lv_obj_create(NULL);
     }
 
     size_t index = 0;
@@ -247,13 +249,12 @@ void slides_demo(void)
     demo_meter(screens[index++]);
     demo_rhino(screens[index++]);
 
-    assert(index<=MAX_DEMO_COUNT);
+    assert(index <= MAX_DEMO_COUNT);
 
     lv_disp_load_scr(screens[screen_index++]);
     const uint32_t timeout_ms = 10000;
     lv_timer_create(swap_screen_timer_callback, timeout_ms, NULL);
 }
-
 
 void run_demo_single_slide(const GRAPHICS_MODE mode)
 {
@@ -267,20 +268,20 @@ void run_demo_single_slide(const GRAPHICS_MODE mode)
     lv_scr_load(scr);
 
 #if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-    int n=0;
+    int n = 0;
 #endif
 
-    while(1)
+    while (1)
     {
         lv_task_handler();
 
-        vTaskDelay(delta/portTICK_PERIOD_MS);
+        vTaskDelay(delta / portTICK_PERIOD_MS);
 
 #if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-        if( n++ > 1000/delta )
+        if (n++ > 1000 / delta)
         {
             video_show_stats();
-            n=0;
+            n = 0;
         }
 #endif
     }
@@ -288,9 +289,9 @@ void run_demo_single_slide(const GRAPHICS_MODE mode)
 
 void run_demo_slides(void)
 {
-#if LV_COLOR_DEPTH<16
-    const size_t pixel_count = 320*200;
-    lv_color_t* lvgl_pixel_buffer = heap_caps_malloc(sizeof(lv_color_t)*pixel_count, MALLOC_CAP_8BIT);
+#if LV_COLOR_DEPTH < 16
+    const size_t pixel_count = 320 * 200;
+    lv_color_t* lvgl_pixel_buffer = heap_caps_malloc(sizeof(lv_color_t) * pixel_count, MALLOC_CAP_8BIT);
     assert(lvgl_pixel_buffer);
 
     lv_video_disp_init_buf(PAL_320x200, lvgl_pixel_buffer, pixel_count);
@@ -304,41 +305,40 @@ void run_demo_slides(void)
     slides_demo();
 
 #if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-    int n=0;
+    int n = 0;
 #endif
     while (1)
     {
         lv_task_handler();
 
-        vTaskDelay(20/portTICK_PERIOD_MS);
+        vTaskDelay(20 / portTICK_PERIOD_MS);
 
 #if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-        if( n++ > 50 )
+        if (n++ > 50)
         {
             video_show_stats();
-            n=0;
+            n = 0;
         }
 #endif
-	}
-
+    }
 }
 #endif
 
 void app_main(void)
 {
-	ESP_ERROR_CHECK(uart_set_baudrate(UART_NUM_0, CONFIG_ESPTOOLPY_MONITOR_BAUD));
+    ESP_ERROR_CHECK(uart_set_baudrate(UART_NUM_0, CONFIG_ESPTOOLPY_MONITOR_BAUD));
 
-//	esp_log_level_set("*", ESP_LOG_INFO);
-	 esp_log_level_set("*", ESP_LOG_DEBUG);
+//  esp_log_level_set("*", ESP_LOG_INFO);
+     esp_log_level_set("*", ESP_LOG_DEBUG);
 
-	ESP_LOGI(TAG, "Application start...");
-	ESP_LOGD(TAG, "DEBUG Output enabled");
+    ESP_LOGI(TAG, "Application start...");
+    ESP_LOGD(TAG, "DEBUG Output enabled");
 
     ESP_LOGI(TAG, "CPU Speed %d MHz", CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ);
     assert(240==CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ);
 
 #if VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-	ESP_LOGI(TAG, "Interrupt timing stats enabled");
+    ESP_LOGI(TAG, "Interrupt timing stats enabled");
 #endif
 
     video_test_ntsc(VIDEO_TEST_CHECKERS);
