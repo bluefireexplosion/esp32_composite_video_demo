@@ -16,13 +16,22 @@
 #include <esp_system.h>
 #include "driver/i2s.h"
 #include "freertos/queue.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
 #if CONFIG_VIDEO_ENABLE_LVGL_SUPPORT
 #include "lvgl_driver_video.h"
 #endif
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 
-static const char* TAG = "DEMO";
+extern const uint8_t _binary_sound_mp3_start[];  // start address
+extern const uint8_t _binary_sound_mp3_end[];    // end address
+
+#define BLINK_GPIO 2   
+
+static const char* TAG = "VIDEO";
+
 
 #if CONFIG_VIDEO_ENABLE_LVGL_SUPPORT
 void demo_pm5544(lv_obj_t* scr)
@@ -290,11 +299,10 @@ void run_demo_single_slide(const GRAPHICS_MODE mode)
 void run_demo_slides(void)
 {
 #if LV_COLOR_DEPTH < 16
-    const size_t pixel_count = 320 * 200;
+    const size_t pixel_count = 320 * 254;
     lv_color_t* lvgl_pixel_buffer = heap_caps_malloc(sizeof(lv_color_t) * pixel_count, MALLOC_CAP_8BIT);
     assert(lvgl_pixel_buffer);
-
-    lv_video_disp_init_buf(PAL_320x200, lvgl_pixel_buffer, pixel_count);
+    lv_video_disp_init_buf(PAL_320x256, lvgl_pixel_buffer, pixel_count);
 #else
     //no memory for buffers
     ESP_LOGI(TAG, "Using direct framebuffer access. Expect tearing effect for animations.");
@@ -326,9 +334,26 @@ void run_demo_slides(void)
 
 void app_main(void)
 {
+
+    // Configure the GPIO
+    gpio_reset_pin(BLINK_GPIO);
+    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+
+    int i = 0;
+    while (i < 1) {
+        // Turn the LED on
+        gpio_set_level(BLINK_GPIO, 1);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+
+        // Turn the LED off
+        gpio_set_level(BLINK_GPIO, 0);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+        i++;
+    }
+    
     ESP_ERROR_CHECK(uart_set_baudrate(UART_NUM_0, CONFIG_ESPTOOLPY_MONITOR_BAUD));
 
-//  esp_log_level_set("*", ESP_LOG_INFO);
+    //  esp_log_level_set("*", ESP_LOG_INFO);
      esp_log_level_set("*", ESP_LOG_DEBUG);
 
     ESP_LOGI(TAG, "Application start...");
@@ -336,15 +361,16 @@ void app_main(void)
 
     ESP_LOGI(TAG, "CPU Speed %d MHz", CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ);
     assert(240==CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ);
-
 #if VIDEO_DIAG_ENABLE_INTERRUPT_STATS
     ESP_LOGI(TAG, "Interrupt timing stats enabled");
 #endif
 
-    video_test_ntsc(VIDEO_TEST_CHECKERS);
-    return;
+    //video_test_ntsc(VIDEO_TEST_CHECKERS);
+    ESP_LOGI(TAG, "Running demo slides!");
+    run_demo_slides();
 
 #if CONFIG_VIDEO_ENABLE_LVGL_SUPPORT
+    ESP_LOGI(TAG, "Running other demo slides!");
     run_demo_slides();
     // run_demo_single_slide(NTSC_320x200);
 #else
