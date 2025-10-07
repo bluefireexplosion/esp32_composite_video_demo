@@ -6,3 +6,10 @@
 	path = components/lvgl
 	url = https://github.com/lvgl/lvgl.git
 	branch = release/v8.2
+[submodule "components/esp-libhelix-mp3"]
+	path = components/esp-libhelix-mp3
+	url = https://github.com/chmorgan/esp-libhelix-mp3
+	branch = main
+[submodule "esp-libhelix-mp3"]
+	path = esp-libhelix-mp3
+	url = https://github.com/chmorgan/esp-libhelix-mp3

@@ -24,9 +24,18 @@
 #endif
 #include "esp_chip_info.h"
 #include "esp_flash.h"
+#include "driver/dac.h"
+#include "mp3dec.h"
+#include <string.h>
+#define I2S_NUM I2S_NUM_0
+#define AUDIO_DMA_BUF_LEN 1024   // size of each DMA buffer
 
-extern const uint8_t _binary_sound_mp3_start[];  // start address
-extern const uint8_t _binary_sound_mp3_end[];    // end address
+extern const uint8_t _binary_portal_mp3_start[];  // start address
+extern const uint8_t _binary_portal_mp3_end[];    // end address
+#define AUDIO_SAMPLE_RATE 16000   // approx, your MP3 frame rate
+#define AUDIO_TASK_STACK 8192
+#define VIDEO_TASK_STACK 8192
+#define AUDIO_BATCH 64
 
 #define BLINK_GPIO 2   
 
@@ -275,25 +284,6 @@ void run_demo_single_slide(const GRAPHICS_MODE mode)
     lv_obj_t* scr = lv_obj_create(NULL);
     demo_pm5544(scr);
     lv_scr_load(scr);
-
-#if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-    int n = 0;
-#endif
-
-    while (1)
-    {
-        lv_task_handler();
-
-        vTaskDelay(delta / portTICK_PERIOD_MS);
-
-#if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-        if (n++ > 1000 / delta)
-        {
-            video_show_stats();
-            n = 0;
-        }
-#endif
-    }
 }
 
 void run_demo_slides(void)
@@ -311,26 +301,122 @@ void run_demo_slides(void)
     ESP_LOGI(TAG, "Slides Demo");
 
     slides_demo();
-
-#if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-    int n = 0;
-#endif
-    while (1)
-    {
-        lv_task_handler();
-
-        vTaskDelay(20 / portTICK_PERIOD_MS);
-
-#if CONFIG_VIDEO_DIAG_ENABLE_INTERRUPT_STATS
-        if (n++ > 50)
-        {
-            video_show_stats();
-            n = 0;
-        }
-#endif
-    }
 }
 #endif
+
+static void setup_dac(void) {
+    dac_output_enable(DAC_CHANNEL_2); // GPIO26
+}
+
+// Convert int16 PCM to 8-bit DAC
+static inline uint8_t pcm16_to_dac8(int16_t sample) {
+    return (sample >> 8) + 128;
+}
+
+/*void combo_task(void *arg) {
+    ESP_LOGI(TAG, "Combined task started");
+    setup_dac();
+
+    HMP3Decoder hMP3Decoder = MP3InitDecoder();
+    uint8_t *read_ptr = (uint8_t *)_binary_portal_mp3_start;
+    int bytes_left = _binary_portal_mp3_end - _binary_portal_mp3_start;
+
+    short *pcm_buf = heap_caps_malloc(1152*2*sizeof(short), MALLOC_CAP_8BIT);
+    if (!pcm_buf) {
+        ESP_LOGE(TAG, "Failed to allocate PCM buffer");
+        vTaskDelete(NULL);
+    }
+    ESP_LOGI(TAG, "Running video start");
+    run_demo_slides();
+    ESP_LOGI(TAG, "Done starting video!");
+    // Skip ID3 tag if present
+    if (memcmp(read_ptr, "ID3", 3) == 0) {
+        int tag_size = ((read_ptr[6] & 0x7F) << 21) |
+                       ((read_ptr[7] & 0x7F) << 14) |
+                       ((read_ptr[8] & 0x7F) << 7)  |
+                       (read_ptr[9] & 0x7F);
+        read_ptr += 10 + tag_size;
+        bytes_left -= 10 + tag_size;
+        ESP_LOGI(TAG, "Skipped ID3 tag (%d bytes)", tag_size);
+    }
+
+    MP3FrameInfo info;
+
+    while (bytes_left > 0) {
+        int err = MP3Decode(hMP3Decoder, &read_ptr, &bytes_left, pcm_buf, 0);
+        if (err != 0) continue;
+
+        MP3GetLastFrameInfo(hMP3Decoder, &info);
+        for (int i = 0; i < info.outputSamps; i += info.nChans) {
+            uint8_t val = (pcm_buf[i] >> 8) + 128;
+            ESP_LOGI(TAG, "Outputting voltage! %u %u", val, bytes_left);
+            dac_output_voltage(DAC_CHANNEL_2, val);
+            esp_rom_delay_us(62); // crude 16 kHz
+        }
+        lv_task_handler();
+    }
+
+    free(pcm_buf);
+    MP3FreeDecoder(hMP3Decoder);
+    ESP_LOGI(TAG, "Audio finished");
+    vTaskDelete(NULL);
+}*/
+
+// Core 1: audio task
+void audio_task(void *arg) {
+    setup_dac();
+    HMP3Decoder hMP3Decoder = MP3InitDecoder();
+
+    uint8_t *read_ptr = (uint8_t *)_binary_portal_mp3_start;
+    int bytes_left = _binary_portal_mp3_end - _binary_portal_mp3_start;
+    short *pcm_buf = heap_caps_malloc(1152*2*sizeof(short), MALLOC_CAP_8BIT);
+
+    if (!pcm_buf) vTaskDelete(NULL);
+
+    // Skip ID3 tag
+    if (memcmp(read_ptr, "ID3", 3) == 0) {
+        int tag_size = ((read_ptr[6] & 0x7F) << 21) |
+                       ((read_ptr[7] & 0x7F) << 14) |
+                       ((read_ptr[8] & 0x7F) << 7) |
+                       (read_ptr[9] & 0x7F);
+        read_ptr += 10 + tag_size;
+        bytes_left -= 10 + tag_size;
+    }
+
+    MP3FrameInfo info;
+
+    while (bytes_left > 0) {
+        int err = MP3Decode(hMP3Decoder, &read_ptr, &bytes_left, pcm_buf, 0);
+        if (err) continue;
+        MP3GetLastFrameInfo(hMP3Decoder, &info);
+
+        int sample_index = 0;
+        while (sample_index < info.outputSamps) {
+            int batch_end = sample_index + AUDIO_BATCH * info.nChans;
+            if (batch_end > info.outputSamps) batch_end = info.outputSamps;
+
+            for (int i = sample_index; i < batch_end; i += info.nChans) {
+                dac_output_voltage(DAC_CHANNEL_2, (pcm_buf[i] >> 8) + 128);
+            }
+
+            sample_index = batch_end;
+            vTaskDelay(pdMS_TO_TICKS(AUDIO_BATCH * 1000 / AUDIO_SAMPLE_RATE));
+        }
+    }
+
+    free(pcm_buf);
+    MP3FreeDecoder(hMP3Decoder);
+    vTaskDelete(NULL);
+}
+
+void video_task(void *arg) {
+    ESP_LOGI(TAG, "Starting video task");
+    run_demo_slides();
+    while (1) {
+        lv_task_handler();
+        vTaskDelay(pdMS_TO_TICKS(20)); // ~50 FPS
+    }
+}
 
 void app_main(void)
 {
@@ -364,14 +450,75 @@ void app_main(void)
 #if VIDEO_DIAG_ENABLE_INTERRUPT_STATS
     ESP_LOGI(TAG, "Interrupt timing stats enabled");
 #endif
+    // Create audio task on core 1
+    xTaskCreatePinnedToCore(audio_task, "audio_task", AUDIO_TASK_STACK, NULL, 5, NULL, 1);
 
-    //video_test_ntsc(VIDEO_TEST_CHECKERS);
-    ESP_LOGI(TAG, "Running demo slides!");
+    // Create video task on core 1 (or core 0 if audio needs priority)
+    /*xTaskCreatePinnedToCore(
+        video_task,
+        "video_task",
+        VIDEO_TASK_STACK,
+        NULL,
+        4,               // Lower priority than audio
+        NULL,
+        0
+    );*/
+    /*ESP_LOGI(TAG, "Running demo slides!");
     run_demo_slides();
+
+    ESP_LOGI(TAG, "Running audio!");
+    dac_output_enable(DAC_CHANNEL_2);  // GPIO26
+    //video_test_ntsc(VIDEO_TEST_CHECKERS);
+
+    HMP3Decoder hMP3Decoder = MP3InitDecoder();
+    uint8_t *read_ptr = (uint8_t *)_binary_portal_mp3_start;
+    int bytes_left = _binary_portal_mp3_end - _binary_portal_mp3_start;
+
+    // Skip ID3v2 tag if present
+    if (memcmp(read_ptr, "ID3", 3) == 0) {
+        int tag_size = ((read_ptr[6] & 0x7F) << 21) |
+                       ((read_ptr[7] & 0x7F) << 14) |
+                       ((read_ptr[8] & 0x7F) << 7)  |
+                       (read_ptr[9] & 0x7F);
+        read_ptr += 10 + tag_size;
+        bytes_left -= 10 + tag_size;
+        //printf("Skipped ID3 tag (%d bytes)\n", tag_size);
+    }
+
+    short pcm[1152 * 2]; // stereo frame buffer
+    while (bytes_left > 0) {
+        int offset = MP3FindSyncWord(read_ptr, bytes_left);
+        if (offset < 0) break; // no sync found
+        read_ptr += offset;
+        bytes_left -= offset;
+
+        int err = MP3Decode(hMP3Decoder, &read_ptr, &bytes_left, pcm, 0);
+        if (err) {
+            printf("MP3Decode error %d, bytes_left=%d\n", err, bytes_left);
+            continue;
+        }
+
+        MP3FrameInfo info;
+        MP3GetLastFrameInfo(hMP3Decoder, &info);
+        //printf("Decoded frame: %d Hz, %d channels, %d samples\n",
+               //info.samprate, info.nChans, info.outputSamps);
+
+        // Send PCM to DAC, I2S, etc. (scaled 0–255 for DAC)
+        for (int i = 0; i < info.outputSamps; i++) {
+            uint8_t val = (pcm[i] >> 8) + 128;
+            dac_output_voltage(DAC_CHANNEL_2, val);
+            esp_rom_delay_us(50); // crude ~8kHz
+        }
+    }
+
+    MP3FreeDecoder(hMP3Decoder);
+
+    dac_output_disable(DAC_CHANNEL_2);*/
+    
 
 #if CONFIG_VIDEO_ENABLE_LVGL_SUPPORT
     ESP_LOGI(TAG, "Running other demo slides!");
-    run_demo_slides();
+    //run_demo_slides();
     // run_demo_single_slide(NTSC_320x200);
 #else
 
